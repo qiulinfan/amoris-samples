@@ -1,0 +1,5 @@
+# A Minecraft-like voxel island: a seeded heightmap of one-metre blocks (gen_world.py writes
+# scene.json), walked with the native collision camera; a script drifts the clouds.
+name = "Blockcraft"
+rate = 60
+seed = 1
