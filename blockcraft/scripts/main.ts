@@ -1,7 +1,7 @@
 // Clouds drift east and wrap around the island; movement is the native walk camera.
 import { component, field, game, system } from "amoris";
 
-const SPAN = 120; // metres a cloud travels before it wraps to the west edge
+const SPAN = 400; // metres a cloud travels before it wraps to the west edge
 
 export const Cloud = component("Cloud", {
     version: 1, doc: "A cloud drifting with the wind.",

@@ -1,38 +1,54 @@
 #!/usr/bin/env python3
-"""Generates blockcraft/scene.json: a seeded voxel island of one-metre blocks.
+"""Generates Blockcraft's world: textures/, world.gltf + world.bin, clouds/ and scene.json.
 
-Only blocks with an exposed face become entities. A grass block is a dirt cube with a thin
-green cap, so its sides read as dirt. Water and clouds are blended (alpha below 1), which the
-walk camera does not collide with. Run: python3 blockcraft/gen_world.py
+A seeded heightmap fills a SIZE x SIZE island of one-metre blocks in an ocean. The terrain is
+meshed per 16 x 16 chunk with every hidden face culled, one primitive per texture, as in a voxel
+sandbox; tall grass and flowers are crossed cut-out quads, water a blended plane. The walk
+camera collides with the opaque geometry only. Run: python3 blockcraft/gen_world.py
 """
 
+import base64
 import json
 import math
 import random
+import struct
 from pathlib import Path
 
-SEED = 8
-SIZE = 72          # blocks along x and z
-SEA = 9            # water surface sits at the top of block y = SEA
-CLOUD_Y = 60
-CAP = 0.125        # grass cap thickness
+import textures
 
-AIR, STONE, DIRT, GRASS, SAND, SNOW, LOG, LEAVES, COAL, IRON, BEDROCK = range(11)
+SEED = 5
+SIZE = 128         # blocks along x and z
+HEIGHT = 80        # blocks along y
+SEA = 30           # water fills up to the top of block y = SEA - 1
+FLOOR = SEA - 12   # the open ocean's floor, which continues past the world's edge
+WATER_TOP = SEA - 0.125
+CHUNK = 16
+CLOUD_Y = 100
+HERE = Path(__file__).parent
 
-# Linear RGB base colors.
-COLORS = {
-    STONE: (0.32, 0.32, 0.33),
-    DIRT: (0.30, 0.17, 0.08),
-    GRASS: (0.16, 0.42, 0.07),
-    SAND: (0.80, 0.70, 0.42),
-    SNOW: (0.88, 0.90, 0.94),
-    LOG: (0.20, 0.12, 0.05),
-    LEAVES: (0.07, 0.26, 0.04),
-    COAL: (0.06, 0.06, 0.06),
-    IRON: (0.62, 0.44, 0.32),
-    BEDROCK: (0.08, 0.08, 0.09),
+(AIR, STONE, DIRT, GRASS, SNOWY, SAND, GRAVEL, BEDROCK, COAL, IRON, GOLD, OAK_LOG, BIRCH_LOG,
+ OAK_LEAVES, BIRCH_LEAVES, TALL_GRASS, POPPY, DANDELION) = range(18)
+PLANTS = {TALL_GRASS, POPPY, DANDELION}
+
+# Texture of each block's (top, side, bottom).
+FACES = {
+    STONE: ("stone",) * 3,
+    DIRT: ("dirt",) * 3,
+    GRASS: ("grass_top", "grass_side", "dirt"),
+    SNOWY: ("snow", "snow_side", "dirt"),
+    SAND: ("sand",) * 3,
+    GRAVEL: ("gravel",) * 3,
+    BEDROCK: ("bedrock",) * 3,
+    COAL: ("coal_ore",) * 3,
+    IRON: ("iron_ore",) * 3,
+    GOLD: ("gold_ore",) * 3,
+    OAK_LOG: ("oak_log_top", "oak_log", "oak_log_top"),
+    BIRCH_LOG: ("birch_log_top", "birch_log", "birch_log_top"),
+    OAK_LEAVES: ("oak_leaves",) * 3,
+    BIRCH_LEAVES: ("birch_leaves",) * 3,
 }
-ROUGHNESS = {SNOW: 0.6, SAND: 0.9, STONE: 0.85, IRON: 0.5}
+PLANT_TEXTURE = {TALL_GRASS: "tall_grass", POPPY: "poppy", DANDELION: "dandelion"}
+ROUGHNESS = {"water": 0.05, "snow": 0.7, "snow_side": 0.85}
 
 
 class ValueNoise:
@@ -56,167 +72,374 @@ class ValueNoise:
         return a + (b - a) * v
 
 
-def heightmap(rng):
-    octaves = [(ValueNoise(rng, 24), 1.0), (ValueNoise(rng, 11), 0.45), (ValueNoise(rng, 5), 0.18)]
-    total = sum(w for _, w in octaves)
-    raw = {(x, z): sum(f(x, z) * w for f, w in octaves) / total
+def fractal(rng, cells, weights):
+    octaves = [ValueNoise(rng, c) for c in cells]
+    total = sum(weights)
+    raw = {(x, z): sum(f(x, z) * w for f, w in zip(octaves, weights)) / total
            for x in range(SIZE) for z in range(SIZE)}
     lo, hi = min(raw.values()), max(raw.values())
-    heights = {}
-    for (x, z), r in raw.items():
-        n = (r - lo) / (hi - lo)
-        # An island: fall off toward the edges.
-        dx, dz = (x - SIZE / 2) / (SIZE / 2), (z - SIZE / 2) / (SIZE / 2)
-        falloff = max(0.0, 1.0 - (dx * dx + dz * dz) ** 1.4)
-        h = SEA + 7 + (n - 0.45) * 36 - (1 - falloff) * 16
-        heights[x, z] = min(40, max(1, int(h)))
-    return heights
+    return {k: (v - lo) / (hi - lo) for k, v in raw.items()}
+
+
+class World:
+    def __init__(self):
+        self.cells = bytearray(SIZE * HEIGHT * SIZE)
+
+    def get(self, x, y, z):
+        if 0 <= x < SIZE and 0 <= z < SIZE and 0 <= y < HEIGHT:
+            return self.cells[(x * SIZE + z) * HEIGHT + y]
+        return AIR
+
+    def set(self, x, y, z, kind):
+        if 0 <= x < SIZE and 0 <= z < SIZE and 0 <= y < HEIGHT:
+            self.cells[(x * SIZE + z) * HEIGHT + y] = kind
+
+    def solid(self, x, y, z):
+        """Past the edge the ocean floor goes on, so the world's sides are never drawn."""
+        if y < 0 or not (0 <= x < SIZE and 0 <= z < SIZE):
+            return y <= FLOOR
+        kind = self.get(x, y, z)
+        return kind != AIR and kind not in PLANTS
 
 
 def build(rng):
-    heights = heightmap(rng)
-    blocks = {}
+    land = fractal(rng, (48, 22, 10, 5), (1.0, 0.5, 0.22, 0.1))
+    rough = fractal(rng, (32, 12), (1.0, 0.4))
+    forest = fractal(rng, (26, 9), (1.0, 0.35))
+    heights = {}
+    for (x, z), n in land.items():
+        dx, dz = (x - SIZE / 2) / (SIZE / 2), (z - SIZE / 2) / (SIZE / 2)
+        falloff = max(0.0, 1.0 - (dx * dx + dz * dz) ** 2.5)
+        hills = (n - 0.42) * 30 + max(0.0, rough[x, z] - 0.55) * 60 * falloff
+        h = SEA + 6 + hills - (1 - falloff) * 26
+        heights[x, z] = min(HEIGHT - 12, max(FLOOR, int(h)))
+
+    world = World()
     for (x, z), h in heights.items():
-        blocks[x, 0, z] = BEDROCK
+        world.set(x, 0, z, BEDROCK)
         for y in range(1, h + 1):
             depth = h - y
             if depth == 0:
-                kind = SAND if h <= SEA + 1 else SNOW if h >= 24 else GRASS
-            elif depth < 3 and h < 22:
-                kind = SAND if h <= SEA + 1 else DIRT
+                if h >= SEA + 20 + rng.randint(0, 2):
+                    kind = SNOWY
+                elif h <= SEA:
+                    kind = SAND if h >= SEA - 4 else GRAVEL if rng.random() < 0.5 else DIRT
+                else:
+                    kind = GRASS
+            elif depth < 3 and h < SEA + 25:
+                kind = SAND if h <= SEA else DIRT
+            elif y == 1 and rng.random() < 0.5:
+                kind = BEDROCK
             else:
                 r = rng.random()
-                kind = COAL if r < 0.05 else IRON if r < 0.075 else STONE
-            blocks[x, y, z] = kind
-    trees = 0
+                kind = (COAL if r < 0.04 else IRON if r < 0.06 and y < SEA + 10
+                        else GOLD if r < 0.065 and y < SEA - 4 else STONE)
+            world.set(x, y, z, kind)
+
+    trunks = []
     for (x, z), h in sorted(heights.items()):
-        if not (3 <= x < SIZE - 3 and 3 <= z < SIZE - 3):
+        if not (3 <= x < SIZE - 3 and 3 <= z < SIZE - 3) or world.get(x, h, z) != GRASS:
             continue
-        if blocks.get((x, h, z)) != GRASS or rng.random() > 0.04:
+        chance = 0.09 if forest[x, z] > 0.62 else 0.005
+        if rng.random() > chance or any(abs(x - tx) < 4 and abs(z - tz) < 4 for tx, tz in trunks):
             continue
-        if any(blocks.get((x + dx, y, z + dz)) in (LOG, LEAVES)
-               for dx in range(-3, 4) for dz in range(-3, 4) for y in range(h, h + 9)):
-            continue
-        trunk = rng.randint(4, 6)
-        top = h + trunk
-        for dy in range(-2, 2):
-            radius = 2 if dy < 0 else 1
+        trunks.append((x, z))
+        birch = rng.random() < 0.3
+        log, leaves = (BIRCH_LOG, BIRCH_LEAVES) if birch else (OAK_LOG, OAK_LEAVES)
+        top = h + rng.randint(5, 7 if birch else 6)
+        for dy in range(-3, 1):
+            radius = 2 if dy < -1 else 1
             for dx in range(-radius, radius + 1):
                 for dz in range(-radius, radius + 1):
                     corner = abs(dx) == radius and abs(dz) == radius
-                    if corner and (dy == 1 or rng.random() < 0.5):
+                    if corner and (dy == 0 or rng.random() < 0.5):
                         continue
-                    blocks.setdefault((x + dx, top + dy, z + dz), LEAVES)
-        blocks[x, top + 1, z] = LEAVES
-        for y in range(h + 1, top + 1):
-            blocks[x, y, z] = LOG
-        trees += 1
-    return heights, blocks, trees
+                    if world.get(x + dx, top + dy, z + dz) == AIR:
+                        world.set(x + dx, top + dy, z + dz, leaves)
+        for y in range(h + 1, top):
+            world.set(x, y, z, log)
+        world.set(x, h, z, DIRT)
+
+    for (x, z), h in heights.items():
+        if world.get(x, h, z) == GRASS and world.get(x, h + 1, z) == AIR:
+            r = rng.random()
+            plant = (TALL_GRASS if r < 0.18 else POPPY if r < 0.19 else DANDELION if r < 0.205
+                     else AIR)
+            world.set(x, h + 1, z, plant)
+    return heights, world, len(trunks)
 
 
-def exposed(blocks, x, y, z):
-    for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
-        if (x + dx, y + dy, z + dz) not in blocks and y + dy >= 0:
-            return True
-    return False
+# The six faces: normal, then the four corners counter-clockwise seen from outside.
+CUBE_FACES = [
+    ((0, 1, 0), [(0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0)]),
+    ((0, -1, 0), [(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1)]),
+    ((1, 0, 0), [(1, 1, 1), (1, 0, 1), (1, 0, 0), (1, 1, 0)]),
+    ((-1, 0, 0), [(0, 1, 0), (0, 0, 0), (0, 0, 1), (0, 1, 1)]),
+    ((0, 0, 1), [(0, 1, 1), (0, 0, 1), (1, 0, 1), (1, 1, 1)]),
+    ((0, 0, -1), [(1, 1, 0), (1, 0, 0), (0, 0, 0), (0, 1, 0)]),
+]
+SIDE_UV = [(0, 0), (0, 1), (1, 1), (1, 0)]
+TOP_UV = [(0, 0), (0, 1), (1, 1), (1, 0)]
+
+
+class Mesh:
+    """Triangles of one primitive: positions, normals, texture coordinates and indices."""
+
+    def __init__(self):
+        self.pos, self.nrm, self.uv, self.idx = [], [], [], []
+
+    def quad(self, corners, normal, uvs):
+        base = len(self.pos)
+        self.pos += corners
+        self.nrm += [normal] * 4
+        self.uv += uvs
+        self.idx += [base, base + 1, base + 2, base, base + 2, base + 3]
+
+
+def mesh_chunks(world):
+    """Per chunk, a Mesh per texture name."""
+    half = SIZE / 2
+    chunks = {}
+    for x in range(SIZE):
+        for z in range(SIZE):
+            prims = chunks.setdefault((x // CHUNK, z // CHUNK), {})
+            for y in range(HEIGHT):
+                kind = world.get(x, y, z)
+                if kind == AIR:
+                    continue
+                ox, oz = x - half, z - half
+                if kind in PLANTS:
+                    mesh = prims.setdefault(PLANT_TEXTURE[kind], Mesh())
+                    for (ax, az), (bx, bz) in (((0.15, 0.15), (0.85, 0.85)),
+                                               ((0.15, 0.85), (0.85, 0.15))):
+                        corners = [(ox + ax, y + 1, oz + az), (ox + ax, y, oz + az),
+                                   (ox + bx, y, oz + bz), (ox + bx, y + 1, oz + bz)]
+                        nx, nz = bz - az, -(bx - ax)
+                        length = math.hypot(nx, nz)
+                        mesh.quad(corners, (nx / length, 0, nz / length), SIDE_UV)
+                    continue
+                top, side, bottom = FACES[kind]
+                for normal, corners in CUBE_FACES:
+                    if world.solid(x + normal[0], y + normal[1], z + normal[2]):
+                        continue
+                    if y + normal[1] < 0:
+                        continue
+                    name = top if normal[1] > 0 else bottom if normal[1] < 0 else side
+                    mesh = prims.setdefault(name, Mesh())
+                    mesh.quad([(ox + cx, y + cy, oz + cz) for cx, cy, cz in corners], normal,
+                              TOP_UV if normal[1] else SIDE_UV)
+    return chunks
+
+
+class Gltf:
+    """A glTF 2.0 document with one binary buffer and one material per texture name."""
+
+    def __init__(self, textures_uri):
+        self.bin = bytearray()
+        self.doc = {"asset": {"version": "2.0", "generator": "blockcraft gen_world.py"},
+                    "scene": 0, "scenes": [{"nodes": []}], "nodes": [], "meshes": [],
+                    "accessors": [], "bufferViews": [], "materials": [], "textures": [],
+                    "images": [], "samplers": [{"magFilter": 9728, "minFilter": 9986}]}
+        self.textures_uri = textures_uri
+        self.materials = {}
+
+    def material(self, name):
+        if name not in self.materials:
+            d = self.doc
+            d["images"].append({"uri": f"{self.textures_uri}/{name}.png"})
+            d["textures"].append({"source": len(d["images"]) - 1, "sampler": 0})
+            m = {"name": name, "pbrMetallicRoughness": {
+                "baseColorTexture": {"index": len(d["textures"]) - 1},
+                "metallicFactor": 0, "roughnessFactor": ROUGHNESS.get(name, 0.95)}}
+            if name in ("tall_grass", "poppy", "dandelion"):
+                m["alphaMode"] = "MASK"
+                m["alphaCutoff"] = 0.5
+                m["doubleSided"] = True
+            elif name == "water":
+                m["alphaMode"] = "BLEND"
+            d["materials"].append(m)
+            self.materials[name] = len(d["materials"]) - 1
+        return self.materials[name]
+
+    def view(self, data, target):
+        while len(self.bin) % 4:
+            self.bin.append(0)
+        self.doc["bufferViews"].append({"buffer": 0, "byteOffset": len(self.bin),
+                                        "byteLength": len(data), "target": target})
+        self.bin += data
+        return len(self.doc["bufferViews"]) - 1
+
+    def accessor(self, values, kind, width):
+        if kind == "SCALAR":
+            data = struct.pack(f"<{len(values)}I", *values)
+            acc = {"componentType": 5125, "count": len(values), "type": "SCALAR",
+                   "bufferView": self.view(data, 34963)}
+        else:
+            flat = [c for v in values for c in v]
+            data = struct.pack(f"<{len(flat)}f", *flat)
+            acc = {"componentType": 5126, "count": len(values), "type": kind,
+                   "bufferView": self.view(data, 34962)}
+            if kind == "VEC3" and width == "position":
+                acc["min"] = [min(v[i] for v in values) for i in range(3)]
+                acc["max"] = [max(v[i] for v in values) for i in range(3)]
+        self.doc["accessors"].append(acc)
+        return len(self.doc["accessors"]) - 1
+
+    def node(self, name, prims):
+        primitives = []
+        for texture, mesh in sorted(prims.items()):
+            primitives.append({"attributes": {
+                "POSITION": self.accessor(mesh.pos, "VEC3", "position"),
+                "NORMAL": self.accessor(mesh.nrm, "VEC3", "normal"),
+                "TEXCOORD_0": self.accessor(mesh.uv, "VEC2", "uv")},
+                "indices": self.accessor(mesh.idx, "SCALAR", None),
+                "material": self.material(texture)})
+        self.doc["meshes"].append({"name": name, "primitives": primitives})
+        self.doc["nodes"].append({"name": name, "mesh": len(self.doc["meshes"]) - 1})
+        self.doc["scenes"][0]["nodes"].append(len(self.doc["nodes"]) - 1)
+
+    def write(self, path, embed=False):
+        uri = path.with_suffix(".bin").name
+        if embed:
+            uri = "data:application/octet-stream;base64," + base64.b64encode(self.bin).decode()
+        else:
+            path.with_suffix(".bin").write_bytes(self.bin)
+        self.doc["buffers"] = [{"byteLength": len(self.bin), "uri": uri}]
+        path.write_text(json.dumps(self.doc, separators=(",", ":")) + "\n")
+
+
+def plane(mesh, y, x0, z0, x1, z1):
+    """An upward quad, its texture repeated once per block."""
+    mesh.quad([(x0, y, z0), (x0, y, z1), (x1, y, z1), (x1, y, z0)], (0, 1, 0),
+              [(x0, z0), (x0, z1), (x1, z1), (x1, z0)])
+
+
+def ocean_meshes():
+    """The water plane well past the island, and the ocean floor around the world's square."""
+    r, h = SIZE * 8, SIZE / 2
+    water = Mesh()
+    plane(water, WATER_TOP, -r, -r, r, r)
+    floor = Mesh()
+    for x0, z0, x1, z1 in ((-r, -r, r, -h), (-r, h, r, r), (-r, -h, -h, h), (h, -h, r, h)):
+        plane(floor, FLOOR + 1, x0, z0, x1, z1)
+    return water, floor
+
+
+def cloud_shapes(rng, count):
+    """Flat blocky clouds: blobs of 12 x 12 m cells, 4 m thick, with inner faces culled."""
+    paths = []
+    (HERE / "clouds").mkdir(exist_ok=True)
+    for k in range(count):
+        cells = {(0, 0)}
+        for _ in range(rng.randint(4, 11)):
+            cx, cz = rng.choice(sorted(cells))
+            dx, dz = rng.choice(((1, 0), (-1, 0), (0, 1), (0, -1)))
+            cells.add((cx + dx, cz + dz))
+        mesh = Mesh()
+        for cx, cz in cells:
+            for normal, corners in CUBE_FACES:
+                if normal[1] == 0 and (cx + normal[0], cz + normal[2]) in cells:
+                    continue
+                mesh.quad([(12 * (cx + px), 4 * py, 12 * (cz + pz)) for px, py, pz in corners],
+                          normal, TOP_UV)
+        gltf = Gltf("../textures")
+        gltf.node(f"cloud{k}", {"cloud": mesh})
+        path = HERE / "clouds" / f"cloud{k}.gltf"
+        gltf.write(path, embed=True)
+        paths.append(f"clouds/cloud{k}.gltf")
+    return paths
+
+
+def spawn(heights, world):
+    """A grass column under the open sky looking the longest way across land.
+
+    Candidates lie 16 to 44 blocks from the centre; each of 16 headings counts the land columns
+    ahead whose ground is open to the sky, out to 40 blocks, before a block (ground or tree)
+    rises to the eyes.
+    """
+    c = SIZE / 2
+    best = None
+    for (x, z), h in sorted(heights.items()):
+        if not (16 <= math.hypot(x - c, z - c) <= 44 and SEA + 3 <= h <= SEA + 16):
+            continue
+        if world.get(x, h, z) != GRASS or any(world.get(x, y, z) for y in range(h + 1, HEIGHT)):
+            continue
+        for k in range(16):
+            yaw = k * math.pi / 8
+            fx, fz = -math.sin(yaw), -math.cos(yaw)  # the camera looks along -z
+            seen = 0
+            for step in range(1, 41):
+                px, pz = round(x + fx * step), round(z + fz * step)
+                eye = int(h + 2 + step * 0.15)
+                if world.solid(px, eye - 1, pz) or world.solid(px, eye, pz):
+                    break
+                ground = heights.get((px, pz), FLOOR)
+                seen += ground > SEA and not any(world.solid(px, y, pz)
+                                                 for y in range(ground + 1, ground + 9))
+            score = (seen, h)
+            if best is None or score > best[0]:
+                best = (score, x, z, yaw)
+    _, x, z, yaw = best
+    position = [x - c + 0.5, heights[x, z] + 1 + 1.65, z - c + 0.5]
+    return position, [0, math.sin(yaw / 2), 0, math.cos(yaw / 2)]
 
 
 def round3(v):
     return [round(c, 3) for c in v]
 
 
-def model(kind, rng, scale=(1, 1, 1)):
-    shade = 1 + rng.uniform(-0.07, 0.07)
-    color = [min(1.0, c * shade) for c in COLORS[kind]] + [1]
-    m = {"mesh": "cube", "color": round3(color), "roughness": ROUGHNESS.get(kind, 0.95)}
-    if scale != (1, 1, 1):
-        m["scale"] = list(scale)
-    return m
-
-
-def entities(heights, blocks, rng):
-    half = SIZE / 2
-    out = []
-    for (x, y, z), kind in sorted(blocks.items()):
-        if not exposed(blocks, x, y, z):
-            continue
-        px, pz = x - half + 0.5, z - half + 0.5
-        if kind == GRASS:
-            out.append({"components": {
-                "Transform": {"position": round3([px, y + (1 - CAP) / 2, pz])},
-                "Model": model(DIRT, rng, (1, 1 - CAP, 1)),
-            }})
-            out.append({"components": {
-                "Transform": {"position": round3([px, y + 1 - CAP / 2, pz])},
-                "Model": model(GRASS, rng, (1, CAP, 1)),
-            }})
-        else:
-            out.append({"components": {
-                "Transform": {"position": round3([px, y + 0.5, pz])},
-                "Model": model(kind, rng),
-            }})
-    return out
-
-
-def clouds(rng):
-    out = []
-    for i in range(14):
-        x = rng.uniform(-SIZE * 0.8, SIZE * 0.8)
-        z = rng.uniform(-SIZE * 0.8, SIZE * 0.8)
-        out.append({"name": f"Cloud{i + 1}", "components": {
-            "Transform": {"position": round3([x, CLOUD_Y + rng.uniform(-1, 1), z])},
-            "Model": {"mesh": "cube", "scale": [rng.randint(6, 16), 1.5, rng.randint(5, 12)],
-                      "color": [1, 1, 1, 0.85], "roughness": 1, "cast_shadows": False},
-            "Cloud": {"speed": round(rng.uniform(0.6, 1.4), 3)},
-        }})
-    return out
-
-
-def spawn(heights, blocks):
-    """A low open grass column near the shore, 16 to 24 blocks out, facing the centre."""
-    c = SIZE / 2
-    ring = [(x, z) for (x, z), h in heights.items()
-            if 16 <= math.hypot(x - c, z - c) <= 24 and blocks[x, h, z] == GRASS
-            and not any((x, y, z) in blocks for y in range(h + 1, h + 5))]
-    x, z = min(ring, key=lambda p: (heights[p], p))
-    yaw = math.atan2(-(c - x), -(c - z))  # the camera looks along -z
-    position = [x - c + 0.5, heights[x, z] + 1 + 1.65, z - c + 0.5]
-    return position, [0, math.sin(yaw / 2), 0, math.cos(yaw / 2)]
-
-
 def main():
     rng = random.Random(SEED)
-    heights, blocks, trees = build(rng)
-    world = entities(heights, blocks, rng)
-    position, rotation = spawn(heights, blocks)
+    textures.draw_all(HERE / "textures", SEED)
+    heights, world, trees = build(rng)
+
+    gltf = Gltf("textures")
+    faces = 0
+    for (cx, cz), prims in sorted(mesh_chunks(world).items()):
+        if prims:
+            gltf.node(f"chunk_{cx}_{cz}", prims)
+            faces += sum(len(m.idx) // 6 for m in prims.values())
+    water, floor = ocean_meshes()
+    gltf.node("ocean", {"water": water, "gravel": floor})
+    gltf.write(HERE / "world.gltf")
+
+    clouds = []
+    shapes = cloud_shapes(rng, 6)
+    for i in range(22):
+        clouds.append({"name": f"Cloud{i + 1}", "components": {
+            "Transform": {"position": round3([rng.uniform(-200, 200), CLOUD_Y,
+                                              rng.uniform(-200, 200)])},
+            "Model": {"mesh": rng.choice(shapes), "color": [1, 1, 1, 0.8],
+                      "emissive": [0.45, 0.45, 0.45], "cast_shadows": False},
+            "Cloud": {"speed": round(rng.uniform(1.2, 1.8), 3)},
+        }})
+
+    position, rotation = spawn(heights, world)
     sun = [-0.42, -0.30, -0.11, 0.85]
     norm = math.sqrt(sum(c * c for c in sun))
     scene = {"format": "amoris-scene", "version": 1, "entities": [
         {"name": "Camera", "components": {
             "Transform": {"position": round3(position), "rotation": round3(rotation)},
-            "Camera": {"fov_deg": 75}}},
+            "Camera": {"fov_deg": 70}}},
         {"name": "Sun", "components": {
             "Transform": {"rotation": round3([c / norm for c in sun])},
-            "Light": {"kind": "directional", "intensity": 10, "shadows": True, "color": [1, 0.95, 0.86]}}},
+            "Light": {"kind": "directional", "intensity": 10, "shadows": True,
+                      "color": [1, 0.96, 0.9]}}},
         {"name": "Environment", "components": {"Environment": {
-            "ambient": 0.9, "exposure_ev": 0.6, "bloom": 0.04,
-            "fog_density": 0.004, "fog_color": [0.62, 0.74, 0.9]}}},
-        {"name": "Water", "components": {
-            "Transform": {"position": [0, SEA + 0.85, 0]},
-            "Model": {"mesh": "plane", "scale": [SIZE * 3, 1, SIZE * 3],
-                      "color": [0.02, 0.1, 0.35, 0.82], "roughness": 0.08, "cast_shadows": False}}},
+            "ambient": 1.0, "exposure_ev": 0.0, "bloom": 0.03,
+            "fog_density": 0.0006, "fog_color": [0.62, 0.76, 0.98]}}},
+        {"name": "World", "components": {"Transform": {}, "Model": {"mesh": "world.gltf"}}},
         {"name": "Title", "components": {"UiText": {
             "text": "Blockcraft", "anchor": "top_left", "offset": [24, 24], "size": 24,
             "color": [1, 1, 1, 1]}}},
         {"name": "Controls", "components": {"UiText": {
             "text": "Click to capture  |  WASD move  |  Shift run  |  Space jump  |  R respawn",
             "anchor": "bottom_left", "offset": [24, 52], "size": 15, "color": [1, 1, 1, 0.9]}}},
-        *clouds(rng),
-        *world,
+        *clouds,
     ]}
-    path = Path(__file__).with_name("scene.json")
-    path.write_text(json.dumps(scene, separators=(",", ":")) + "\n")
-    print(f"{len(blocks)} blocks, {len(world)} block entities, {trees} trees -> {path}")
+    (HERE / "scene.json").write_text(json.dumps(scene, indent=1) + "\n")
+    print(f"{faces} faces in {len(gltf.doc['nodes']) - 1} chunks, {trees} trees, "
+          f"{len(gltf.bin) // 1024} KB of geometry")
 
 
 if __name__ == "__main__":

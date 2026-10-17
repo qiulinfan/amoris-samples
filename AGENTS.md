@@ -6,8 +6,8 @@
   with `../amoris-samples/<game>`. Engine gaps a game finds are fixed in the engine repository; game
   code only uses the engine.
 - The engine's own `samples/` stay there: its tests, checks and benchmarks read them.
-- A generated `scene.json` is committed together with the generator that writes it; regenerate it
-  rather than editing it by hand.
+- Generated files (scenes, meshes, textures) are committed together with the generator that writes
+  them; regenerate them rather than editing them by hand.
 - Run output, captures and logs go to the engine's ignored `out/`, never into this repository.
 - This repository is public: commit only original or compatibly licensed assets, with their
   license and source next to them.

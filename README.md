@@ -6,7 +6,7 @@ game. Each is a complete Amoris project: `project.toml`, `scene.json` and TypeSc
 
 | Game | What it is |
 |---|---|
-| [blockcraft](blockcraft/README.md) | A Minecraft-like voxel island to walk and climb |
+| [blockcraft](blockcraft/README.md) | A voxel sandbox island in pixel-art blocks, to walk and climb |
 
 ## Running
 
