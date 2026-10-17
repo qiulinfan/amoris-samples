@@ -1,0 +1,15 @@
+# A running host's address and generated script types (amoris serve, scripts types)
+.amoris/
+__pycache__/
+out/
+
+# Personal environment files (at every depth)
+.DS_Store
+.obsidian/
+.vscode/
+.idea/
+*.code-workspace
+.claude/
+.codex/
+.opencode/
+.omp/
