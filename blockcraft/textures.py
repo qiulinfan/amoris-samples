@@ -176,6 +176,43 @@ def plant(rng, blades, flower=None):
     return img
 
 
+def cobblestone(rng):
+    """Rounded stones with dark mortar between them."""
+    img = [[rgba((74, 74, 74)) for _ in range(N)] for _ in range(N)]
+    shades = [(128, 128, 128), (112, 112, 112), (140, 140, 140), (100, 100, 100)]
+    for _ in range(14):
+        cx, cy = rng.randrange(N), rng.randrange(N)
+        rx, ry = rng.uniform(1.6, 3.4), rng.uniform(1.4, 2.8)
+        shade = rng.choice(shades)
+        for y in range(N):
+            for x in range(N):
+                dx = min(abs(x - cx), N - abs(x - cx)) / rx
+                dy = min(abs(y - cy), N - abs(y - cy)) / ry
+                if dx * dx + dy * dy <= 1.0:
+                    j = rng.randint(-8, 8)
+                    img[y][x] = rgba(tuple(max(0, min(255, c + j)) for c in shade))
+    return img
+
+
+def planks(rng):
+    """Four boards with grain, their ends staggered."""
+    base = [(162, 130, 78), (150, 120, 72), (172, 140, 86)]
+    img = [[None] * N for _ in range(N)]
+    for board in range(4):
+        shade = rng.choice(base)
+        joint = rng.randrange(N)
+        for y in range(board * 4, board * 4 + 4):
+            for x in range(N):
+                j = rng.randint(-6, 6)
+                c = tuple(max(0, min(255, v + j)) for v in shade)
+                if y == board * 4 + 3:
+                    c = (104, 82, 48)
+                elif x == joint and board % 2 == 0:
+                    c = (116, 92, 54)
+                img[y][x] = rgba(c)
+    return img
+
+
 def cloud(_rng):
     return [[(255, 255, 255, 255)] * N for _ in range(N)]
 
@@ -209,6 +246,8 @@ def draw_all(directory, seed):
         "birch_leaves": lambda r: leaves(r, [(104, 146, 62), (88, 128, 50), (118, 160, 72)],
                                          (36, 58, 22)),
         "water": water,
+        "cobblestone": cobblestone,
+        "oak_planks": planks,
         "tall_grass": lambda r: plant(r, blades),
         "poppy": lambda r: plant(r, blades, ([(214, 34, 30), (186, 20, 20)], (40, 30, 20))),
         "dandelion": lambda r: plant(r, blades, ([(252, 226, 40), (236, 200, 24)], (200, 150, 20))),

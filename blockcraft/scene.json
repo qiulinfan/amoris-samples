@@ -3,27 +3,6 @@
  "version": 1,
  "entities": [
   {
-   "name": "Camera",
-   "components": {
-    "Transform": {
-     "position": [
-      -25.5,
-      48.65,
-      -34.5
-     ],
-     "rotation": [
-      0,
-      0.924,
-      0,
-      0.383
-     ]
-    },
-    "Camera": {
-     "fov_deg": 70
-    }
-   }
-  },
-  {
    "name": "Sun",
    "components": {
     "Transform": {
@@ -65,9 +44,245 @@
   {
    "name": "World",
    "components": {
+    "Transform": {
+     "position": [
+      -64.0,
+      0,
+      -64.0
+     ]
+    },
+    "Land": {},
+    "Voxels": {
+     "source": "world.cells",
+     "palette": [
+      {
+       "name": "air"
+      },
+      {
+       "name": "stone",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#stone",
+        "blocks.gltf#stone",
+        "blocks.gltf#stone"
+       ]
+      },
+      {
+       "name": "dirt",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#dirt",
+        "blocks.gltf#dirt",
+        "blocks.gltf#dirt"
+       ]
+      },
+      {
+       "name": "grass",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#grass_top",
+        "blocks.gltf#grass_side",
+        "blocks.gltf#dirt"
+       ]
+      },
+      {
+       "name": "snowy_grass",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#snow",
+        "blocks.gltf#snow_side",
+        "blocks.gltf#dirt"
+       ]
+      },
+      {
+       "name": "sand",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#sand",
+        "blocks.gltf#sand",
+        "blocks.gltf#sand"
+       ]
+      },
+      {
+       "name": "gravel",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#gravel",
+        "blocks.gltf#gravel",
+        "blocks.gltf#gravel"
+       ]
+      },
+      {
+       "name": "bedrock",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#bedrock",
+        "blocks.gltf#bedrock",
+        "blocks.gltf#bedrock"
+       ]
+      },
+      {
+       "name": "coal_ore",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#coal_ore",
+        "blocks.gltf#coal_ore",
+        "blocks.gltf#coal_ore"
+       ]
+      },
+      {
+       "name": "iron_ore",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#iron_ore",
+        "blocks.gltf#iron_ore",
+        "blocks.gltf#iron_ore"
+       ]
+      },
+      {
+       "name": "gold_ore",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#gold_ore",
+        "blocks.gltf#gold_ore",
+        "blocks.gltf#gold_ore"
+       ]
+      },
+      {
+       "name": "oak_log",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#oak_log_top",
+        "blocks.gltf#oak_log",
+        "blocks.gltf#oak_log_top"
+       ]
+      },
+      {
+       "name": "birch_log",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#birch_log_top",
+        "blocks.gltf#birch_log",
+        "blocks.gltf#birch_log_top"
+       ]
+      },
+      {
+       "name": "oak_leaves",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#oak_leaves",
+        "blocks.gltf#oak_leaves",
+        "blocks.gltf#oak_leaves"
+       ]
+      },
+      {
+       "name": "birch_leaves",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#birch_leaves",
+        "blocks.gltf#birch_leaves",
+        "blocks.gltf#birch_leaves"
+       ]
+      },
+      {
+       "name": "tall_grass",
+       "shape": "cross",
+       "faces": [
+        "blocks.gltf#tall_grass",
+        "",
+        ""
+       ]
+      },
+      {
+       "name": "poppy",
+       "shape": "cross",
+       "faces": [
+        "blocks.gltf#poppy",
+        "",
+        ""
+       ]
+      },
+      {
+       "name": "dandelion",
+       "shape": "cross",
+       "faces": [
+        "blocks.gltf#dandelion",
+        "",
+        ""
+       ]
+      },
+      {
+       "name": "water",
+       "shape": "liquid",
+       "faces": [
+        "blocks.gltf#water",
+        "",
+        ""
+       ]
+      },
+      {
+       "name": "cobblestone",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#cobblestone",
+        "blocks.gltf#cobblestone",
+        "blocks.gltf#cobblestone"
+       ]
+      },
+      {
+       "name": "oak_planks",
+       "solid": true,
+       "faces": [
+        "blocks.gltf#oak_planks",
+        "blocks.gltf#oak_planks",
+        "blocks.gltf#oak_planks"
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "Ocean",
+   "components": {
     "Transform": {},
     "Model": {
-     "mesh": "world.gltf"
+     "mesh": "ocean.gltf"
+    }
+   }
+  },
+  {
+   "name": "Steve",
+   "components": {
+    "Transform": {
+     "position": [
+      -25.5,
+      48.62,
+      -34.5
+     ],
+     "rotation": [
+      0,
+      0.924,
+      0,
+      0.383
+     ]
+    },
+    "Walker": {
+     "yaw": 2.356194
+    },
+    "Camera": {
+     "fov_deg": 70
+    },
+    "Observer": {
+     "profile": "player",
+     "seat": "player"
+    },
+    "Spawn": {
+     "eye": {
+      "x": -25.5,
+      "y": 48.62,
+      "z": -34.5
+     }
     }
    }
   },
@@ -95,11 +310,11 @@
    "name": "Controls",
    "components": {
     "UiText": {
-     "text": "Click to capture  |  WASD move  |  Shift run  |  Space jump  |  R respawn",
-     "anchor": "bottom_left",
+     "text": "WASD move  |  Space jump  |  Shift run  |  Left break  |  Right place  |  1-9 or wheel: block",
+     "anchor": "top_left",
      "offset": [
       24,
-      52
+      60
      ],
      "size": 15,
      "color": [
@@ -109,6 +324,21 @@
       0.9
      ]
     }
+   }
+  },
+  {
+   "name": "Hotbar",
+   "components": {
+    "UiText": {
+     "text": "",
+     "anchor": "bottom",
+     "offset": [
+      0,
+      64
+     ],
+     "size": 20
+    },
+    "Hotbar": {}
    }
   },
   {

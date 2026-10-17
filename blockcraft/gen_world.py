@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Generates Blockcraft's world: textures/, world.gltf + world.bin, clouds/ and scene.json.
+"""Generates Blockcraft's world: textures/, blocks.gltf, world.cells, ocean.gltf, clouds/ and
+scene.json.
 
-A seeded heightmap fills a SIZE x SIZE island of one-metre blocks in an ocean. The terrain is
-meshed per 16 x 16 chunk with every hidden face culled, one primitive per texture, as in a voxel
-sandbox; tall grass and flowers are crossed cut-out quads, water a blended plane. The walk
-camera collides with the opaque geometry only. Run: python3 blockcraft/gen_world.py
+A seeded heightmap fills a SIZE x SIZE island of one-metre blocks in an ocean: the cells of the
+engine's block volume (`Voxels`, amoris docs/spec/voxels.md), written as its cells file. The engine
+meshes and collides with the volume and scripts edit it; blocks.gltf holds only the blocks'
+materials. Past the volume the ocean and its floor go on as two planes. Run:
+python3 blockcraft/gen_world.py
 """
 
 import base64
@@ -25,10 +27,15 @@ WATER_TOP = SEA - 0.125
 CHUNK = 16
 CLOUD_Y = 100
 HERE = Path(__file__).parent
+EYE = 1.62         # the walker's eye above its feet
 
 (AIR, STONE, DIRT, GRASS, SNOWY, SAND, GRAVEL, BEDROCK, COAL, IRON, GOLD, OAK_LOG, BIRCH_LOG,
- OAK_LEAVES, BIRCH_LEAVES, TALL_GRASS, POPPY, DANDELION) = range(18)
+ OAK_LEAVES, BIRCH_LEAVES, TALL_GRASS, POPPY, DANDELION, WATER, COBBLESTONE, OAK_PLANKS) = range(21)
 PLANTS = {TALL_GRASS, POPPY, DANDELION}
+# The palette's names, by index (air first).
+NAMES = ["air", "stone", "dirt", "grass", "snowy_grass", "sand", "gravel", "bedrock", "coal_ore",
+         "iron_ore", "gold_ore", "oak_log", "birch_log", "oak_leaves", "birch_leaves", "tall_grass",
+         "poppy", "dandelion", "water", "cobblestone", "oak_planks"]
 
 # Texture of each block's (top, side, bottom).
 FACES = {
@@ -46,6 +53,8 @@ FACES = {
     BIRCH_LOG: ("birch_log_top", "birch_log", "birch_log_top"),
     OAK_LEAVES: ("oak_leaves",) * 3,
     BIRCH_LEAVES: ("birch_leaves",) * 3,
+    COBBLESTONE: ("cobblestone",) * 3,
+    OAK_PLANKS: ("oak_planks",) * 3,
 }
 PLANT_TEXTURE = {TALL_GRASS: "tall_grass", POPPY: "poppy", DANDELION: "dandelion"}
 ROUGHNESS = {"water": 0.05, "snow": 0.7, "snow_side": 0.85}
@@ -95,11 +104,11 @@ class World:
             self.cells[(x * SIZE + z) * HEIGHT + y] = kind
 
     def solid(self, x, y, z):
-        """Past the edge the ocean floor goes on, so the world's sides are never drawn."""
+        """Past the edge the ocean floor goes on."""
         if y < 0 or not (0 <= x < SIZE and 0 <= z < SIZE):
             return y <= FLOOR
         kind = self.get(x, y, z)
-        return kind != AIR and kind not in PLANTS
+        return kind != AIR and kind not in PLANTS and kind != WATER
 
 
 def build(rng):
@@ -166,6 +175,9 @@ def build(rng):
             plant = (TALL_GRASS if r < 0.18 else POPPY if r < 0.19 else DANDELION if r < 0.205
                      else AIR)
             world.set(x, h + 1, z, plant)
+    for (x, z), h in heights.items():
+        for y in range(h + 1, SEA):
+            world.set(x, y, z, WATER)
     return heights, world, len(trunks)
 
 
@@ -178,7 +190,6 @@ CUBE_FACES = [
     ((0, 0, 1), [(0, 1, 1), (0, 0, 1), (1, 0, 1), (1, 1, 1)]),
     ((0, 0, -1), [(1, 1, 0), (1, 0, 0), (0, 0, 0), (0, 1, 0)]),
 ]
-SIDE_UV = [(0, 0), (0, 1), (1, 1), (1, 0)]
 TOP_UV = [(0, 0), (0, 1), (1, 1), (1, 0)]
 
 
@@ -196,43 +207,46 @@ class Mesh:
         self.idx += [base, base + 1, base + 2, base, base + 2, base + 3]
 
 
-def mesh_chunks(world):
-    """Per chunk, a Mesh per texture name."""
-    half = SIZE / 2
-    chunks = {}
-    for x in range(SIZE):
-        for z in range(SIZE):
-            prims = chunks.setdefault((x // CHUNK, z // CHUNK), {})
-            for y in range(HEIGHT):
-                kind = world.get(x, y, z)
-                if kind == AIR:
-                    continue
-                ox, oz = x - half, z - half
-                if kind in PLANTS:
-                    mesh = prims.setdefault(PLANT_TEXTURE[kind], Mesh())
-                    for (ax, az), (bx, bz) in (((0.15, 0.15), (0.85, 0.85)),
-                                               ((0.15, 0.85), (0.85, 0.15))):
-                        corners = [(ox + ax, y + 1, oz + az), (ox + ax, y, oz + az),
-                                   (ox + bx, y, oz + bz), (ox + bx, y + 1, oz + bz)]
-                        nx, nz = bz - az, -(bx - ax)
-                        length = math.hypot(nx, nz)
-                        mesh.quad(corners, (nx / length, 0, nz / length), SIDE_UV)
-                    continue
-                top, side, bottom = FACES[kind]
-                for normal, corners in CUBE_FACES:
-                    if world.solid(x + normal[0], y + normal[1], z + normal[2]):
-                        continue
-                    if y + normal[1] < 0:
-                        continue
-                    name = top if normal[1] > 0 else bottom if normal[1] < 0 else side
-                    mesh = prims.setdefault(name, Mesh())
-                    mesh.quad([(ox + cx, y + cy, oz + cz) for cx, cy, cz in corners], normal,
-                              TOP_UV if normal[1] else SIDE_UV)
-    return chunks
+def palette():
+    """The volume's palette: each block's shape, solidity and face materials in blocks.gltf."""
+    out = [{"name": "air"}]
+    for kind in range(1, len(NAMES)):
+        if kind in PLANTS:
+            block = {"shape": "cross", "faces": [f"blocks.gltf#{PLANT_TEXTURE[kind]}", "", ""]}
+        elif kind == WATER:
+            block = {"shape": "liquid", "faces": ["blocks.gltf#water", "", ""]}
+        else:
+            block = {"solid": True, "faces": [f"blocks.gltf#{f}" for f in FACES[kind]]}
+        out.append({"name": NAMES[kind], **block})
+    return out
+
+
+def write_cells(world, path):
+    """The volume's cells file (voxels.md 2.3): every chunk holding a block, in key order."""
+    chunks = []
+    for cy in range(HEIGHT // CHUNK):
+        for cz in range(SIZE // CHUNK):
+            for cx in range(SIZE // CHUNK):
+                cells = bytearray(CHUNK ** 3)
+                for y in range(CHUNK):
+                    for z in range(CHUNK):
+                        for x in range(CHUNK):
+                            cells[x + CHUNK * (z + CHUNK * y)] = world.get(
+                                cx * CHUNK + x, cy * CHUNK + y, cz * CHUNK + z)
+                if any(cells):
+                    chunks.append(((cx, cy, cz), bytes(cells)))
+    # Key order is [x, y, z] compared in turn.
+    chunks.sort(key=lambda c: c[0])
+    out = bytearray(b"AMVX" + struct.pack("<II", 1, len(chunks)))
+    for key, cells in chunks:
+        out += struct.pack("<iii", *key) + cells
+    path.write_bytes(out)
+    return len(chunks)
 
 
 class Gltf:
-    """A glTF 2.0 document with one binary buffer and one material per texture name."""
+    """A glTF 2.0 document with one binary buffer and one material per texture name; with no
+    nodes, a library of materials."""
 
     def __init__(self, textures_uri):
         self.bin = bytearray()
@@ -298,13 +312,13 @@ class Gltf:
         self.doc["nodes"].append({"name": name, "mesh": len(self.doc["meshes"]) - 1})
         self.doc["scenes"][0]["nodes"].append(len(self.doc["nodes"]) - 1)
 
-    def write(self, path, embed=False):
-        uri = path.with_suffix(".bin").name
-        if embed:
+    def write(self, path):
+        if self.bin:
             uri = "data:application/octet-stream;base64," + base64.b64encode(self.bin).decode()
+            self.doc["buffers"] = [{"byteLength": len(self.bin), "uri": uri}]
         else:
-            path.with_suffix(".bin").write_bytes(self.bin)
-        self.doc["buffers"] = [{"byteLength": len(self.bin), "uri": uri}]
+            for key in ("accessors", "bufferViews", "meshes", "nodes"):
+                self.doc.pop(key)
         path.write_text(json.dumps(self.doc, separators=(",", ":")) + "\n")
 
 
@@ -315,12 +329,11 @@ def plane(mesh, y, x0, z0, x1, z1):
 
 
 def ocean_meshes():
-    """The water plane well past the island, and the ocean floor around the world's square."""
+    """The water and the ocean floor past the volume's square, out to 1 km."""
     r, h = SIZE * 8, SIZE / 2
-    water = Mesh()
-    plane(water, WATER_TOP, -r, -r, r, r)
-    floor = Mesh()
+    water, floor = Mesh(), Mesh()
     for x0, z0, x1, z1 in ((-r, -r, r, -h), (-r, h, r, r), (-r, -h, -h, h), (h, -h, r, h)):
+        plane(water, WATER_TOP, x0, z0, x1, z1)
         plane(floor, FLOOR + 1, x0, z0, x1, z1)
     return water, floor
 
@@ -345,7 +358,7 @@ def cloud_shapes(rng, count):
         gltf = Gltf("../textures")
         gltf.node(f"cloud{k}", {"cloud": mesh})
         path = HERE / "clouds" / f"cloud{k}.gltf"
-        gltf.write(path, embed=True)
+        gltf.write(path)
         paths.append(f"clouds/cloud{k}.gltf")
     return paths
 
@@ -380,8 +393,8 @@ def spawn(heights, world):
             if best is None or score > best[0]:
                 best = (score, x, z, yaw)
     _, x, z, yaw = best
-    position = [x - c + 0.5, heights[x, z] + 1 + 1.65, z - c + 0.5]
-    return position, [0, math.sin(yaw / 2), 0, math.cos(yaw / 2)]
+    position = [x - c + 0.5, heights[x, z] + 1 + EYE, z - c + 0.5]
+    return position, yaw
 
 
 def round3(v):
@@ -393,15 +406,16 @@ def main():
     textures.draw_all(HERE / "textures", SEED)
     heights, world, trees = build(rng)
 
-    gltf = Gltf("textures")
-    faces = 0
-    for (cx, cz), prims in sorted(mesh_chunks(world).items()):
-        if prims:
-            gltf.node(f"chunk_{cx}_{cz}", prims)
-            faces += sum(len(m.idx) // 6 for m in prims.values())
+    library = Gltf("textures")
+    names = {f for faces in FACES.values() for f in faces}
+    for name in sorted(names | set(PLANT_TEXTURE.values()) | {"water"}):
+        library.material(name)
+    library.write(HERE / "blocks.gltf")
+    chunks = write_cells(world, HERE / "world.cells")
+    ocean = Gltf("textures")
     water, floor = ocean_meshes()
-    gltf.node("ocean", {"water": water, "gravel": floor})
-    gltf.write(HERE / "world.gltf")
+    ocean.node("ocean", {"water": water, "gravel": floor})
+    ocean.write(HERE / "ocean.gltf")
 
     clouds = []
     shapes = cloud_shapes(rng, 6)
@@ -414,13 +428,11 @@ def main():
             "Cloud": {"speed": round(rng.uniform(1.2, 1.8), 3)},
         }})
 
-    position, rotation = spawn(heights, world)
+    position, yaw = spawn(heights, world)
+    eye = round3(position)
     sun = [-0.42, -0.30, -0.11, 0.85]
     norm = math.sqrt(sum(c * c for c in sun))
     scene = {"format": "amoris-scene", "version": 1, "entities": [
-        {"name": "Camera", "components": {
-            "Transform": {"position": round3(position), "rotation": round3(rotation)},
-            "Camera": {"fov_deg": 70}}},
         {"name": "Sun", "components": {
             "Transform": {"rotation": round3([c / norm for c in sun])},
             "Light": {"kind": "directional", "intensity": 10, "shadows": True,
@@ -428,18 +440,32 @@ def main():
         {"name": "Environment", "components": {"Environment": {
             "ambient": 1.0, "exposure_ev": 0.0, "bloom": 0.03,
             "fog_density": 0.0006, "fog_color": [0.62, 0.76, 0.98]}}},
-        {"name": "World", "components": {"Transform": {}, "Model": {"mesh": "world.gltf"}}},
+        {"name": "World", "components": {
+            "Transform": {"position": [-SIZE / 2, 0, -SIZE / 2]},
+            "Land": {},
+            "Voxels": {"source": "world.cells", "palette": palette()}}},
+        {"name": "Ocean", "components": {"Transform": {}, "Model": {"mesh": "ocean.gltf"}}},
+        {"name": "Steve", "components": {
+            "Transform": {"position": eye,
+                          "rotation": round3([0, math.sin(yaw / 2), 0, math.cos(yaw / 2)])},
+            "Walker": {"yaw": round(yaw, 6)},
+            "Camera": {"fov_deg": 70},
+            "Observer": {"profile": "player", "seat": "player"},
+            "Spawn": {"eye": {"x": eye[0], "y": eye[1], "z": eye[2]}}}},
         {"name": "Title", "components": {"UiText": {
             "text": "Blockcraft", "anchor": "top_left", "offset": [24, 24], "size": 24,
             "color": [1, 1, 1, 1]}}},
         {"name": "Controls", "components": {"UiText": {
-            "text": "Click to capture  |  WASD move  |  Shift run  |  Space jump  |  R respawn",
-            "anchor": "bottom_left", "offset": [24, 52], "size": 15, "color": [1, 1, 1, 0.9]}}},
+            "text": "WASD move  |  Space jump  |  Shift run  |  Left break  |  Right place  |  "
+                    "1-9 or wheel: block",
+            "anchor": "top_left", "offset": [24, 60], "size": 15, "color": [1, 1, 1, 0.9]}}},
+        {"name": "Hotbar", "components": {
+            "UiText": {"text": "", "anchor": "bottom", "offset": [0, 64], "size": 20},
+            "Hotbar": {}}},
         *clouds,
     ]}
     (HERE / "scene.json").write_text(json.dumps(scene, indent=1) + "\n")
-    print(f"{faces} faces in {len(gltf.doc['nodes']) - 1} chunks, {trees} trees, "
-          f"{len(gltf.bin) // 1024} KB of geometry")
+    print(f"{chunks} chunks, {trees} trees, spawn {eye}")
 
 
 if __name__ == "__main__":
