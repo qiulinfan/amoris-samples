@@ -215,10 +215,12 @@ def palette():
         if kind in PLANTS:
             block = {"shape": "cross", "faces": [f"blocks.gltf#{PLANT_TEXTURE[kind]}", "", ""]}
         elif kind == WATER:
-            # Flows as in the block game (amoris docs/spec/liquids.md 3): 7 cells, every 15 ticks.
+            # Flows as in the block game (amoris docs/spec/liquids.md 3): 7 cells, every 15 ticks;
+            # splashes where it enters a cell or a stream lands (docs/spec/splashes.md 2).
             block = {"shape": "liquid", "faces": ["blocks.gltf#water", "", ""],
                      "flow": {"spread": 7, "period_ticks": 15, "seek": 4, "renews": True,
-                              "fog": [0.02, 0.09, 0.32, 0.11]}}
+                              "fog": [0.02, 0.09, 0.32, 0.11],
+                              "splash": [6.0, 1.8, 0.9]}}
         else:
             block = {"solid": True, "faces": [f"blocks.gltf#{f}" for f in FACES[kind]]}
         out.append({"name": NAMES[kind], **block})
