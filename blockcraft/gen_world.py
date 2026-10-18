@@ -24,6 +24,7 @@ HEIGHT = 80        # blocks along y
 SEA = 30           # water fills up to the top of block y = SEA - 1
 FLOOR = SEA - 12   # the open ocean's floor, which continues past the world's edge
 WATER_TOP = SEA - 0.125
+WATER_STYLE = "Smooth"  # or "Blocky": the water's surface flat over each block
 CHUNK = 16
 CLOUD_Y = 100
 HERE = Path(__file__).parent
@@ -215,12 +216,10 @@ def palette():
         if kind in PLANTS:
             block = {"shape": "cross", "faces": [f"blocks.gltf#{PLANT_TEXTURE[kind]}", "", ""]}
         elif kind == WATER:
-            # Flows as in the block game (amoris docs/spec/liquids.md 3): 7 cells, every 15 ticks;
-            # splashes where it enters a cell or a stream lands (docs/spec/splashes.md 2).
+            # The engine's water (amoris docs/spec/water.md 6): its cells become the water region's
+            # depth at load, and a placed water block pours a block's water into its columns.
             block = {"shape": "liquid", "faces": ["blocks.gltf#water", "", ""],
-                     "flow": {"spread": 7, "period_ticks": 15, "seek": 4, "renews": True,
-                              "fog": [0.02, 0.09, 0.32, 0.11],
-                              "splash": [6.0, 1.8, 0.9]}}
+                     "flow": {"spread": 0, "model": "field"}}
         else:
             block = {"solid": True, "faces": [f"blocks.gltf#{f}" for f in FACES[kind]]}
         out.append({"name": NAMES[kind], **block})
@@ -454,6 +453,16 @@ def main():
             "Transform": {"position": [-SIZE / 2, 0, -SIZE / 2]},
             "Land": {},
             "Voxels": {"source": "world.cells", "palette": palette()}}},
+        # The island's water: one region over the volume at two columns a block, its thin films
+        # drying below 2 mm (amoris docs/spec/water.md 3 and 6).
+        {"name": "Water", "components": {
+            "Transform": {"position": [-SIZE / 2, 0, -SIZE / 2]},
+            "WaterRegion": {
+                "cell_m": 0.5, "size": [2 * SIZE, 2 * SIZE],
+                "bed": {"Voxels": {"volume": 3, "per": 2, "y_lo": 0, "y_hi": HEIGHT - 1}},
+                "dry_below": 0.002,
+                "look": {"fog": [0.02, 0.09, 0.32, 0.11], "absorb": [0.9, 0.3, 0.15],
+                         "style": WATER_STYLE}}}},
         {"name": "Ocean", "components": {"Transform": {}, "Model": {"mesh": "ocean.gltf"}}},
         {"name": "Steve", "components": {
             "Transform": {"position": eye,

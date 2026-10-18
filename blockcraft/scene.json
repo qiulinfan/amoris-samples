@@ -220,21 +220,8 @@
         ""
        ],
        "flow": {
-        "spread": 7,
-        "period_ticks": 15,
-        "seek": 4,
-        "renews": true,
-        "fog": [
-         0.02,
-         0.09,
-         0.32,
-         0.11
-        ],
-        "splash": [
-         6.0,
-         1.8,
-         0.9
-        ]
+        "spread": 0,
+        "model": "field"
        }
       },
       {
@@ -256,6 +243,48 @@
        ]
       }
      ]
+    }
+   }
+  },
+  {
+   "name": "Water",
+   "components": {
+    "Transform": {
+     "position": [
+      -64.0,
+      0,
+      -64.0
+     ]
+    },
+    "WaterRegion": {
+     "cell_m": 0.5,
+     "size": [
+      256,
+      256
+     ],
+     "bed": {
+      "Voxels": {
+       "volume": 3,
+       "per": 2,
+       "y_lo": 0,
+       "y_hi": 79
+      }
+     },
+     "dry_below": 0.002,
+     "look": {
+      "fog": [
+       0.02,
+       0.09,
+       0.32,
+       0.11
+      ],
+      "absorb": [
+       0.9,
+       0.3,
+       0.15
+      ],
+      "style": "Smooth"
+     }
     }
    }
   },
