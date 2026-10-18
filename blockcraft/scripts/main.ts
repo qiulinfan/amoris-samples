@@ -1,13 +1,14 @@
 // Blockcraft's rules: the player breaks the block it looks at and places the hotbar's block against
 // it; the hotbar shows the selected slot; a fall into the void returns to the spawn; clouds drift.
-// The engine moves the player (Walker) and draws and collides with the island (Voxels).
+// The engine moves the player (Walker), draws and collides with the island (Voxels), and flows its
+// water: a broken bank floods, placed water spreads, the player swims.
 import { component, field, game, system } from "amoris";
 import type { Entity, Triple } from "amoris";
 
 const SPAN = 400; // metres a cloud travels before it wraps to the west edge
 const REACH = 5; // metres a player reaches
-const HOTBAR = ["grass", "dirt", "stone", "cobblestone", "oak_planks", "oak_log", "sand", "oak_leaves", "poppy"];
-const LABELS = ["Grass", "Dirt", "Stone", "Cobblestone", "Planks", "Log", "Sand", "Leaves", "Poppy"];
+const HOTBAR = ["grass", "dirt", "stone", "cobblestone", "oak_planks", "oak_log", "sand", "water", "poppy"];
+const LABELS = ["Grass", "Dirt", "Stone", "Cobblestone", "Planks", "Log", "Sand", "Water", "Poppy"];
 
 export const Cloud = component("Cloud", {
     version: 1, doc: "A cloud drifting with the wind.",
@@ -107,7 +108,7 @@ export const hands = system({
             if (name === "poppy") {
                 const below = ctx.voxels.get(land, at[0], at[1] - 1, at[2]);
                 if (below !== ctx.voxels.block(land, "grass") && below !== ctx.voxels.block(land, "dirt")) continue;
-            } else if (overlaps(at, o, eye, w.half_width_m[r], w.height_m[r], w.eye_m[r])) {
+            } else if (name !== "water" && overlaps(at, o, eye, w.half_width_m[r], w.height_m[r], w.eye_m[r])) {
                 continue;
             }
             ctx.voxels.set(land, at[0], at[1], at[2], block);

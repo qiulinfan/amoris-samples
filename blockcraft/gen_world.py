@@ -132,7 +132,8 @@ def build(rng):
                 if h >= SEA + 20 + rng.randint(0, 2):
                     kind = SNOWY
                 elif h <= SEA:
-                    kind = SAND if h >= SEA - 4 else GRAVEL if rng.random() < 0.5 else DIRT
+                    # Gravel on the deep floor, as the ocean floor past the volume.
+                    kind = SAND if h >= SEA - 4 else GRAVEL
                 else:
                     kind = GRASS
             elif depth < 3 and h < SEA + 25:
@@ -214,7 +215,10 @@ def palette():
         if kind in PLANTS:
             block = {"shape": "cross", "faces": [f"blocks.gltf#{PLANT_TEXTURE[kind]}", "", ""]}
         elif kind == WATER:
-            block = {"shape": "liquid", "faces": ["blocks.gltf#water", "", ""]}
+            # Flows as in the block game (amoris docs/spec/liquids.md 3): 7 cells, every 15 ticks.
+            block = {"shape": "liquid", "faces": ["blocks.gltf#water", "", ""],
+                     "flow": {"spread": 7, "period_ticks": 15, "seek": 4, "renews": True,
+                              "fog": [0.02, 0.09, 0.32, 0.11]}}
         else:
             block = {"solid": True, "faces": [f"blocks.gltf#{f}" for f in FACES[kind]]}
         out.append({"name": NAMES[kind], **block})
@@ -222,7 +226,8 @@ def palette():
 
 
 def write_cells(world, path):
-    """The volume's cells file (voxels.md 2.3): every chunk holding a block, in key order."""
+    """The volume's cells file (voxels.md 2.3, liquids.md 2): every chunk holding a block, in key
+    order."""
     chunks = []
     for cy in range(HEIGHT // CHUNK):
         for cz in range(SIZE // CHUNK):
@@ -237,9 +242,10 @@ def write_cells(world, path):
                     chunks.append(((cx, cy, cz), bytes(cells)))
     # Key order is [x, y, z] compared in turn.
     chunks.sort(key=lambda c: c[0])
-    out = bytearray(b"AMVX" + struct.pack("<II", 1, len(chunks)))
+    # Version 2: each chunk's cells, then a flag byte, 0: no state bytes (every liquid a source).
+    out = bytearray(b"AMVX" + struct.pack("<II", 2, len(chunks)))
     for key, cells in chunks:
-        out += struct.pack("<iii", *key) + cells
+        out += struct.pack("<iii", *key) + cells + b"\x00"
     path.write_bytes(out)
     return len(chunks)
 
@@ -270,7 +276,9 @@ class Gltf:
                 m["alphaCutoff"] = 0.5
                 m["doubleSided"] = True
             elif name == "water":
+                # Both sides: from under the water its surface still shows.
                 m["alphaMode"] = "BLEND"
+                m["doubleSided"] = True
             d["materials"].append(m)
             self.materials[name] = len(d["materials"]) - 1
         return self.materials[name]
