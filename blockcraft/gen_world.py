@@ -461,8 +461,9 @@ def main():
                 "cell_m": 0.5, "size": [2 * SIZE, 2 * SIZE],
                 "bed": {"Voxels": {"volume": 3, "per": 2, "y_lo": 0, "y_hi": HEIGHT - 1}},
                 "dry_below": 0.002,
-                "look": {"fog": [0.02, 0.09, 0.32, 0.11], "absorb": [0.9, 0.3, 0.15],
-                         "style": WATER_STYLE}}}},
+                # Absorption and scattering per metre: deep water dark blue, shallows clear.
+                "look": {"fog": [0.02, 0.09, 0.32, 0.11], "absorb": [1.2, 0.3, 0.12],
+                         "scatter": [0.1, 0.2, 0.4], "style": WATER_STYLE}}}},
         {"name": "Ocean", "components": {"Transform": {}, "Model": {"mesh": "ocean.gltf"}}},
         {"name": "Steve", "components": {
             "Transform": {"position": eye,
