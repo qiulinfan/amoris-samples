@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Generates Blockcraft's world: textures/, blocks.gltf, world.cells, ocean.gltf, clouds/ and
-scene.json.
+"""Generates Blockcraft's world: textures/, blocks.gltf, world.cells, clouds/ and scene.json.
 
 A seeded heightmap fills a SIZE x SIZE island of one-metre blocks in an ocean: the cells of the
 engine's block volume (`Voxels`, amoris docs/spec/voxels.md), written as its cells file. The engine
 meshes and collides with the volume and scripts edit it; blocks.gltf holds only the blocks'
-materials. Past the volume the ocean and its floor go on as two planes. Run:
+materials. Past the volume the engine draws the water region's surrounding water as open sea. Run:
 python3 blockcraft/gen_world.py
 """
 
@@ -23,7 +22,6 @@ SIZE = 128         # blocks along x and z
 HEIGHT = 80        # blocks along y
 SEA = 30           # water fills up to the top of block y = SEA - 1
 FLOOR = SEA - 12   # the open ocean's floor, which continues past the world's edge
-WATER_TOP = SEA - 0.125
 WATER_STYLE = "Smooth"  # or "Blocky": the water's surface flat over each block
 CHUNK = 16
 CLOUD_Y = 100
@@ -331,22 +329,6 @@ class Gltf:
         path.write_text(json.dumps(self.doc, separators=(",", ":")) + "\n")
 
 
-def plane(mesh, y, x0, z0, x1, z1):
-    """An upward quad, its texture repeated once per block."""
-    mesh.quad([(x0, y, z0), (x0, y, z1), (x1, y, z1), (x1, y, z0)], (0, 1, 0),
-              [(x0, z0), (x0, z1), (x1, z1), (x1, z0)])
-
-
-def ocean_meshes():
-    """The water and the ocean floor past the volume's square, out to 1 km."""
-    r, h = SIZE * 8, SIZE / 2
-    water, floor = Mesh(), Mesh()
-    for x0, z0, x1, z1 in ((-r, -r, r, -h), (-r, h, r, r), (-r, -h, -h, h), (h, -h, r, h)):
-        plane(water, WATER_TOP, x0, z0, x1, z1)
-        plane(floor, FLOOR + 1, x0, z0, x1, z1)
-    return water, floor
-
-
 def cloud_shapes(rng, count):
     """Flat blocky clouds: blobs of 12 x 12 m cells, 4 m thick, with inner faces culled."""
     paths = []
@@ -421,10 +403,6 @@ def main():
         library.material(name)
     library.write(HERE / "blocks.gltf")
     chunks = write_cells(world, HERE / "world.cells")
-    ocean = Gltf("textures")
-    water, floor = ocean_meshes()
-    ocean.node("ocean", {"water": water, "gravel": floor})
-    ocean.write(HERE / "ocean.gltf")
 
     clouds = []
     shapes = cloud_shapes(rng, 6)
@@ -454,7 +432,8 @@ def main():
             "Land": {},
             "Voxels": {"source": "world.cells", "palette": palette()}}},
         # The island's water: one region over the volume at two columns a block, its thin films
-        # drying below 2 mm (amoris docs/spec/water.md 3 and 6).
+        # drying below 2 mm, and 5 km of open sea drawn around it at its level (amoris
+        # docs/spec/water.md 3, 6 and 9).
         {"name": "Water", "components": {
             "Transform": {"position": [-SIZE / 2, 0, -SIZE / 2]},
             "WaterRegion": {
@@ -463,8 +442,8 @@ def main():
                 "dry_below": 0.002,
                 # Absorption and scattering per metre: deep water dark blue, shallows clear.
                 "look": {"fog": [0.02, 0.09, 0.32, 0.11], "absorb": [1.2, 0.3, 0.12],
-                         "scatter": [0.1, 0.2, 0.4], "style": WATER_STYLE}}}},
-        {"name": "Ocean", "components": {"Transform": {}, "Model": {"mesh": "ocean.gltf"}}},
+                         "scatter": [0.1, 0.2, 0.4], "style": WATER_STYLE,
+                         "surround_m": 5000}}}},
         {"name": "Steve", "components": {
             "Transform": {"position": eye,
                           "rotation": round3([0, math.sin(yaw / 2), 0, math.cos(yaw / 2)])},

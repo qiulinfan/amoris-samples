@@ -288,17 +288,9 @@
        0.2,
        0.4
       ],
-      "style": "Smooth"
+      "style": "Smooth",
+      "surround_m": 5000
      }
-    }
-   }
-  },
-  {
-   "name": "Ocean",
-   "components": {
-    "Transform": {},
-    "Model": {
-     "mesh": "ocean.gltf"
     }
    }
   },

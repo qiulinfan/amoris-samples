@@ -37,8 +37,8 @@ field over the blocks' beds.
 - `gen_world.py` writes everything the scene loads: `textures/` (16 x 16 pixel art written
   upscaled by nearest neighbour to 1024 x 1024, the size the engine resamples every texture to,
   so the pixels stay sharp), `blocks.gltf` (the blocks' materials, no geometry), `world.cells`
-  (the volume's cells), `ocean.gltf` (the water and ocean floor past the volume, out to 1 km),
-  `clouds/` and `scene.json` (the player placed where it sees farthest across open land).
+  (the volume's cells), `clouds/` and `scene.json` (the player placed where it sees farthest
+  across open land; the water region draws 5 km of open sea around the island at its level).
 - `scripts/main.ts` holds the rules: breaking and placing (a ray cast from the eye through water;
   bedrock stays; plants go with the block under them; a block never goes where the player
   stands; poppies only on grass or dirt), the hotbar's text, the return to the spawn after a fall
